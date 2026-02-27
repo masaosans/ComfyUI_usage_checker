@@ -140,22 +140,28 @@ class UsageCheckerNode:
                 for key in model_input_map[node_type]:
                     val = inputs.get(key)
                     if isinstance(val, str):
-                        used_model_files.add(val)
-                        dependency_graph[node_type].append(val)
-    
+                        normalized = self.normalize_model_name(val)
+                        if normalized:
+                            used_model_files.add(normalized)
+                            dependency_graph[node_type].append(normalized)
+            
             # Embedding検出
             for v in inputs.values():
                 if isinstance(v, str):
                     embeddings = self.extract_embeddings(v)
                     for emb in embeddings:
-                        used_model_files.add(emb)
-                        dependency_graph[node_type].append(emb)
+                        normalized = self.normalize_model_name(emb)
+                        if normalized:
+                            used_model_files.add(normalized)
+                            dependency_graph[node_type].append(normalized)
     
             # フォールバック拡張子検出
             for v in inputs.values():
                 if isinstance(v, str) and self.is_model_filename(v):
-                    used_model_files.add(v)
-                    dependency_graph[node_type].append(v)
+                    normalized = self.normalize_model_name(v)
+                    if normalized:
+                        used_model_files.add(normalized)
+                        dependency_graph[node_type].append(normalized)
 
 
     # =====================================================
@@ -321,3 +327,20 @@ class UsageCheckerNode:
             ".bin",
             ".onnx"
         ))
+        
+    # =====================================================
+    # モデル名正規化
+    # =====================================================
+
+    def normalize_model_name(self, value):
+
+        if not isinstance(value, str):
+            return None
+
+        # パス区切りを統一
+        value = value.replace("\\", "/")
+
+        # ファイル名だけ取得
+        name = os.path.basename(value)
+
+        return name
