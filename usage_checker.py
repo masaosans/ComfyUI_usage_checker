@@ -31,6 +31,7 @@ class UsageCheckerNode:
         used_model_files = set()
         dependency_graph = {}
 
+        # 🔥 全workflowスキャン
         for root, _, files in os.walk(workflow_dir):
             for file in files:
                 if file.endswith(".json"):
@@ -41,11 +42,16 @@ class UsageCheckerNode:
                         dependency_graph
                     )
 
+        # custom_nodes
         custom_nodes_dir = folder_paths.get_folder_paths("custom_nodes")[0]
-        all_custom_nodes = self.scan_custom_nodes(custom_nodes_dir)
 
+        # 🔥 custom_nodes直下のみ取得
+        top_level_dirs = self.get_top_level_custom_nodes(custom_nodes_dir)
+
+        # 🔥 モデル一覧
         all_models = self.scan_all_model_files()
 
+        # node_type → path
         node_type_to_path = self.build_node_type_path_map(custom_nodes_dir)
 
         used_node_paths = set(
@@ -54,9 +60,16 @@ class UsageCheckerNode:
             if nt in node_type_to_path
         )
 
-        unused_nodes = all_custom_nodes - used_node_paths
         unused_models = set(all_models.keys()) - used_model_files
 
+        # 🔥 削除可能ディレクトリ判定
+        removable_dirs = self.detect_removable_directories(
+            top_level_dirs,
+            node_type_to_path,
+            used_node_types
+        )
+
+        # ===== レポート =====
         report = []
         report.append("===== USAGE REPORT =====\n")
 
@@ -65,9 +78,9 @@ class UsageCheckerNode:
             path = node_type_to_path.get(nt, "")
             report.append(f"{nt} ({path})")
 
-        report.append("\n---- Unused Custom Nodes ----")
-        for path in sorted(unused_nodes):
-            report.append(f"{os.path.basename(path)} ({path})")
+        report.append("\n---- Removable Custom Node Directories ----")
+        for d in sorted(removable_dirs):
+            report.append(f"{os.path.basename(d)} ({d})")
 
         report.append("\n---- Used Models ----")
         for m in sorted(used_model_files):
@@ -80,6 +93,7 @@ class UsageCheckerNode:
         report.append("\n---- Dependency Summary ----")
         report.append(f"Used Nodes: {len(used_node_types)}")
         report.append(f"Used Models: {len(used_model_files)}")
+        report.append(f"Removable Directories: {len(removable_dirs)}")
 
         return ("\n".join(report),)
 
@@ -88,15 +102,15 @@ class UsageCheckerNode:
     # =====================================================
 
     def scan_workflow(self, path, used_node_types, used_model_files, dependency_graph):
-    
+
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except:
             return
-    
+
         nodes = []
-    
+
         if isinstance(data, dict):
             if isinstance(data.get("nodes"), dict):
                 nodes = data["nodes"].values()
@@ -104,65 +118,65 @@ class UsageCheckerNode:
                 nodes = data["nodes"]
         elif isinstance(data, list):
             nodes = data
-    
-        model_input_map = self.build_dynamic_model_input_map()
-    
+
         for node in nodes:
-    
+
             node_type = node.get("type")
-            if not node_type:
-                continue
-    
-            used_node_types.add(node_type)
-    
+            if node_type:
+                used_node_types.add(node_type)
+
             raw_inputs = node.get("inputs", {})
-    
-            # inputs 正規化
+
             if isinstance(raw_inputs, dict):
                 inputs = raw_inputs
-    
             elif isinstance(raw_inputs, list):
-                inputs = {}
-                for item in raw_inputs:
-                    if isinstance(item, dict):
-                        name = item.get("name")
-                        value = item.get("value")
-                        if name:
-                            inputs[name] = value
+                inputs = {
+                    item.get("name"): item.get("value")
+                    for item in raw_inputs
+                    if isinstance(item, dict) and item.get("name")
+                }
             else:
                 inputs = {}
-    
+
             if node_type not in dependency_graph:
                 dependency_graph[node_type] = []
-    
-            # 動的モデル検出
-            if node_type in model_input_map:
-                for key in model_input_map[node_type]:
-                    val = inputs.get(key)
-                    if isinstance(val, str):
-                        normalized = self.normalize_model_name(val)
-                        if normalized:
-                            used_model_files.add(normalized)
-                            dependency_graph[node_type].append(normalized)
-            
-            # Embedding検出
-            for v in inputs.values():
-                if isinstance(v, str):
-                    embeddings = self.extract_embeddings(v)
-                    for emb in embeddings:
-                        normalized = self.normalize_model_name(emb)
-                        if normalized:
-                            used_model_files.add(normalized)
-                            dependency_graph[node_type].append(normalized)
-    
-            # フォールバック拡張子検出
-            for v in inputs.values():
-                if isinstance(v, str) and self.is_model_filename(v):
-                    normalized = self.normalize_model_name(v)
-                    if normalized:
-                        used_model_files.add(normalized)
-                        dependency_graph[node_type].append(normalized)
 
+            for value in inputs.values():
+
+                if not isinstance(value, str):
+                    continue
+
+                resolved = self.resolve_model(value)
+
+                if resolved:
+                    filename = os.path.basename(resolved)
+                    used_model_files.add(filename)
+                    dependency_graph[node_type].append(filename)
+
+                for emb in self.extract_embeddings(value):
+                    resolved = self.resolve_model(emb)
+                    if resolved:
+                        filename = os.path.basename(resolved)
+                        used_model_files.add(filename)
+                        dependency_graph[node_type].append(filename)
+
+    # =====================================================
+    # Resolver
+    # =====================================================
+
+    def resolve_model(self, value):
+
+        value = value.strip().replace("\\", "/")
+
+        for category in folder_paths.folder_names_and_paths.keys():
+            try:
+                full_path = folder_paths.get_full_path(category, value)
+                if full_path and os.path.exists(full_path):
+                    return full_path
+            except:
+                continue
+
+        return None
 
     # =====================================================
     # Embedding抽出
@@ -172,15 +186,9 @@ class UsageCheckerNode:
 
         results = set()
 
-        # embedding:xxx
         matches = re.findall(r"embedding:([\w\-\_\.]+)", text)
-        for m in matches:
-            if not m.endswith(".pt"):
-                m += ".pt"
-            results.add(m)
+        matches += re.findall(r"<embedding:([\w\-\_\.]+)>", text)
 
-        # <embedding:xxx>
-        matches = re.findall(r"<embedding:([\w\-\_\.]+)>", text)
         for m in matches:
             if not m.endswith(".pt"):
                 m += ".pt"
@@ -189,108 +197,43 @@ class UsageCheckerNode:
         return results
 
     # =====================================================
-    # 動的INPUT_TYPES解析
-    # =====================================================
-
-    def build_dynamic_model_input_map(self):
-
-        model_input_map = {}
-
-        for node_type, cls in NODE_CLASS_MAPPINGS.items():
-
-            try:
-                input_types = cls.INPUT_TYPES()
-            except:
-                continue
-
-            detected = []
-
-            for section in ["required", "optional"]:
-                section_data = input_types.get(section, {})
-
-                for input_name, input_def in section_data.items():
-
-                    if not isinstance(input_def, tuple):
-                        continue
-
-                    input_type = input_def[0]
-                    options = input_def[1] if len(input_def) > 1 else {}
-
-                    if isinstance(options, dict) and "folder" in options:
-                        detected.append(input_name)
-                        continue
-
-                    if input_type in [
-                        "MODEL",
-                        "CLIP",
-                        "VAE",
-                        "CONTROL_NET",
-                        "CONDITIONING"
-                    ]:
-                        detected.append(input_name)
-                        continue
-
-                    lowered = input_name.lower()
-                    keywords = [
-                        "ckpt", "model", "lora", "vae",
-                        "control", "clip", "unet",
-                        "encoder", "embedding"
-                    ]
-
-                    if any(k in lowered for k in keywords):
-                        detected.append(input_name)
-
-            if detected:
-                model_input_map[node_type] = detected
-
-        return model_input_map
-
-    # =====================================================
     # モデル全取得
     # =====================================================
 
     def scan_all_model_files(self):
-    
+
         all_models = {}
-    
+
         for category, entry in folder_paths.folder_names_and_paths.items():
-    
-            # ComfyUIバージョン差異対応
-            if isinstance(entry, tuple):
-                paths = entry[0]  # (paths, options)
-            else:
-                paths = entry
-    
+
+            paths = entry[0] if isinstance(entry, tuple) else entry
+
             if not isinstance(paths, list):
                 continue
-    
+
             for base_path in paths:
-    
-                if not isinstance(base_path, (str, bytes, os.PathLike)):
-                    continue
-    
+
                 if not os.path.exists(base_path):
                     continue
-    
+
                 for root, _, files in os.walk(base_path):
                     for file in files:
                         if self.is_model_filename(file):
                             full_path = os.path.join(root, file)
                             all_models[file] = full_path
-    
-        return all_models
 
+        return all_models
 
     # =====================================================
     # custom_nodes解析
     # =====================================================
 
-    def scan_custom_nodes(self, path):
-        result = set()
-        for root, dirs, _ in os.walk(path):
-            for d in dirs:
-                result.add(os.path.join(root, d))
-        return result
+    def get_top_level_custom_nodes(self, custom_nodes_dir):
+        return {
+            os.path.join(custom_nodes_dir, d)
+            for d in os.listdir(custom_nodes_dir)
+            if os.path.isdir(os.path.join(custom_nodes_dir, d))
+        }
 
     def build_node_type_path_map(self, custom_nodes_dir):
 
@@ -310,16 +253,38 @@ class UsageCheckerNode:
 
         return mapping
 
+    def detect_removable_directories(self, top_level_dirs, node_type_to_path, used_node_types):
+
+        # ディレクトリごとに属するnode_typeを集約
+        dir_to_node_types = {}
+
+        for node_type, path in node_type_to_path.items():
+            dir_to_node_types.setdefault(path, set()).add(node_type)
+
+        removable = set()
+
+        for d in top_level_dirs:
+
+            node_types = dir_to_node_types.get(d, set())
+
+            # node_typeを一つも持たないディレクトリも削除候補
+            if not node_types:
+                removable.add(d)
+                continue
+
+            # すべて未使用なら削除候補
+            if all(nt not in used_node_types for nt in node_types):
+                removable.add(d)
+
+        return removable
+
     # =====================================================
     # モデル拡張子判定
     # =====================================================
 
     def is_model_filename(self, name):
 
-        if not isinstance(name, str):
-            return False
-
-        return name.lower().endswith((
+        return isinstance(name, str) and name.lower().endswith((
             ".safetensors",
             ".ckpt",
             ".pt",
@@ -327,20 +292,3 @@ class UsageCheckerNode:
             ".bin",
             ".onnx"
         ))
-        
-    # =====================================================
-    # モデル名正規化
-    # =====================================================
-
-    def normalize_model_name(self, value):
-
-        if not isinstance(value, str):
-            return None
-
-        # パス区切りを統一
-        value = value.replace("\\", "/")
-
-        # ファイル名だけ取得
-        name = os.path.basename(value)
-
-        return name
