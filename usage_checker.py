@@ -249,7 +249,7 @@ class UsageCheckerNode:
     
         for category, entry in folder_paths.folder_names_and_paths.items():
     
-            # 🔥 ComfyUIバージョン差異対応
+            # ComfyUIバージョン差異対応
             if isinstance(entry, tuple):
                 paths = entry[0]  # (paths, options)
             else:
