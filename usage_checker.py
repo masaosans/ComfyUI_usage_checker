@@ -18,7 +18,7 @@ class ComfyUIUsageChecker:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "workflows_dir": ("STRING", {"default": "workflows"}),
+                "workflows_dir": ("STRING", {"default": "user/default/workflows"}),
             }
         }
 
