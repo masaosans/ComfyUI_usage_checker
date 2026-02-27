@@ -303,3 +303,21 @@ class UsageCheckerNode:
                 mapping[node_type] = os.path.join(custom_nodes_dir, base_dir)
 
         return mapping
+
+    # =====================================================
+    # モデル拡張子判定
+    # =====================================================
+
+    def is_model_filename(self, name):
+
+        if not isinstance(name, str):
+            return False
+
+        return name.lower().endswith((
+            ".safetensors",
+            ".ckpt",
+            ".pt",
+            ".pth",
+            ".bin",
+            ".onnx"
+        ))
