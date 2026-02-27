@@ -244,27 +244,36 @@ class UsageCheckerNode:
     # =====================================================
 
     def scan_all_model_files(self):
-
-        model_categories = folder_paths.folder_names_and_paths
+    
         all_models = {}
-
-        for category, paths in model_categories.items():
-            for path in paths:
-                for root, _, files in os.walk(path):
+    
+        for category, entry in folder_paths.folder_names_and_paths.items():
+    
+            # 🔥 ComfyUIバージョン差異対応
+            if isinstance(entry, tuple):
+                paths = entry[0]  # (paths, options)
+            else:
+                paths = entry
+    
+            if not isinstance(paths, list):
+                continue
+    
+            for base_path in paths:
+    
+                if not isinstance(base_path, (str, bytes, os.PathLike)):
+                    continue
+    
+                if not os.path.exists(base_path):
+                    continue
+    
+                for root, _, files in os.walk(base_path):
                     for file in files:
                         if self.is_model_filename(file):
-                            all_models[file] = os.path.join(root, file)
-
+                            full_path = os.path.join(root, file)
+                            all_models[file] = full_path
+    
         return all_models
 
-    def is_model_filename(self, name):
-        return name.lower().endswith((
-            ".safetensors",
-            ".ckpt",
-            ".pt",
-            ".pth",
-            ".bin"
-        ))
 
     # =====================================================
     # custom_nodes解析
