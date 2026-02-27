@@ -83,9 +83,8 @@ git clone https://github.com/masaosans/ComfyUI_usage_checker.git
 
 #  使い方
 
-1. ノード追加
-2. `ComfyUI Usage Checker` を配置
-3. `workflow_dir` に workflow フォルダを指定
+1. ノード追加　→　`check usage model and node` を配置
+2. `workflow_dir` に workflow フォルダを指定
 
 #  出力例
 
