@@ -5,18 +5,14 @@ ComfyUIの workflow を横断スキャンし、
 
 ---
 
-# 🔥 特徴（Resolverベース完全版）
-
-本ツールは推測ベースではありません。
+#  特徴（Resolverベース完全版）
 
 ComfyUI内部の `folder_paths.get_full_path()` を利用し、  
-**実際に解決可能なモデルのみを Used と判定する Resolver方式**を採用しています。
+**実際に解決可能なモデルのみを Used と判定する 方式**を採用しています。
 
-- 推測なし
-- basename一致なし
-- サブフォルダ完全対応
-- Windows完全対応
-- Embedding完全対応
+- サブフォルダ対応
+- Windows対応
+- Embedding対応
 
 ---
 
@@ -61,7 +57,7 @@ folder_paths.get_full_path(category, value)
 
 ---
 
-## 3. Embedding完全対応
+## 3. Embedding対応
 
 以下形式を自動検出します。
 
@@ -98,7 +94,7 @@ custom_nodes直下ディレクトリ単位で：
 OldExtension (C:\ComfyUI\custom_nodes\OldExtension)
 ```
 
-※ 自動削除は行いません（安全設計）
+※ 自動削除は行いません
 
 ---
 
@@ -167,27 +163,9 @@ user/default/workflows
 
 ## モデル検出方式
 
-従来の：
-
-- INPUT_TYPES推測
-- node_type推測
-- キーワードヒューリスティック
-
-は使用していません。
-
-代わりに、
-
 Resolver方式（ComfyUI内部解決エンジン利用）
 
 のみで判定しています。
-
-これにより：
-
-- 同名モデル問題回避
-- サブフォルダ完全対応
-- 将来ノード追加への自動適応
-
-を実現しています。
 
 ---
 
@@ -197,19 +175,6 @@ Resolver方式（ComfyUI内部解決エンジン利用）
 - 実行中のworkflowは解析対象外
 - workflow内に保存されていない一時ロードモデルは検出できません
 - 外部スクリプトからロードされるモデルは検出対象外です
-
----
-
-# このツールの思想
-
-拡張子検索ではなく、
-
-**ComfyUI内部の実解決ロジックを利用する**
-
-ことで、
-
-将来耐性・高精度・安定性を兼ね備えた  
-本格的 Usage Checker を実現します。
 
 ---
 
