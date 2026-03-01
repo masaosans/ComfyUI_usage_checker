@@ -95,6 +95,9 @@ class UsageCheckerNode:
         report.append(f"Used Models: {len(used_model_files)}")
         report.append(f"Removable Directories: {len(removable_dirs)}")
 
+        print(f"[DEBUG] used_model_files = {used_model_files}")
+        print(f"[DEBUG] all_models = {list(all_models.keys())[:20]}")
+        
         return ("\n".join(report),)
 
     # =====================================================
@@ -103,6 +106,9 @@ class UsageCheckerNode:
 
     def scan_workflow(self, path, used_node_types, used_model_files, dependency_graph):
 
+        print(f"[DEBUG] Scanning workflow: {path}")
+        print(f"[DEBUG] Root JSON type: {type(data)}")
+        
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -119,7 +125,13 @@ class UsageCheckerNode:
         elif isinstance(data, list):
             nodes = data
 
+        print(f"[DEBUG] Nodes container type: {type(nodes)}")
+        
         for node in nodes:
+            print(f"[DEBUG] Node keys: {list(node.keys())}")
+            print(f"[DEBUG] Node type: {node.get('type')}")
+            print(f"[DEBUG] Raw inputs type: {type(node.get('inputs'))}")
+            
 
             node_type = node.get("type")
             if node_type:
@@ -138,6 +150,8 @@ class UsageCheckerNode:
             else:
                 inputs = {}
 
+            print(f"[DEBUG] Normalized inputs: {inputs}")
+
             if node_type not in dependency_graph:
                 dependency_graph[node_type] = []
 
@@ -148,13 +162,16 @@ class UsageCheckerNode:
 
                 # ① まず拡張子で拾う（Resolver非依存）
                 if self.is_model_filename(value):
+                    print(f"[DEBUG] Detected model by extension: {value}")
                     filename = os.path.basename(value)
                     used_model_files.add(filename)
                     dependency_graph[node_type].append(filename)
-                
+
+                print(f"[DEBUG] Checking value: {value}")
                 # ② Resolverで追加確認
                 resolved = self.resolve_model(value)
                 if resolved:
+                    print(f"[DEBUG] Resolver matched: {resolved}")    
                     filename = os.path.basename(resolved)
                     used_model_files.add(filename)
                     dependency_graph[node_type].append(filename)
