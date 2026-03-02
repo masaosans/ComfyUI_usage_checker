@@ -5,6 +5,9 @@ import folder_paths
 from nodes import NODE_CLASS_MAPPINGS
 
 
+DEBUG = False  # ← 必要なときだけ True にする
+
+
 class UsageCheckerNode:
 
     @classmethod
@@ -31,48 +34,55 @@ class UsageCheckerNode:
         used_model_files = set()
         dependency_graph = {}
 
-        # 🔥 全workflowスキャン
+        workflow_count = 0
+
+        # =============================
+        # Workflow再帰スキャン
+        # =============================
         for root, _, files in os.walk(workflow_dir):
             for file in files:
                 if not file.endswith(".json"):
                     continue
                 if file.startswith("."):
-                    continue  # ← これ重要
-        
+                    continue
+
+                workflow_count += 1
+
                 self.scan_workflow(
                     os.path.join(root, file),
                     used_node_types,
                     used_model_files,
                     dependency_graph
                 )
-        # custom_nodes
-        custom_nodes_dir = folder_paths.get_folder_paths("custom_nodes")[0]
 
-        # 🔥 custom_nodes直下のみ取得
+        # =============================
+        # custom_nodes解析
+        # =============================
+        custom_nodes_dir = folder_paths.get_folder_paths("custom_nodes")[0]
         top_level_dirs = self.get_top_level_custom_nodes(custom_nodes_dir)
 
-        # 🔥 モデル一覧
-        all_models = self.scan_all_model_files()
-
-        # node_type → path
         node_type_to_path = self.build_node_type_path_map(custom_nodes_dir)
 
-        used_node_paths = set(
-            node_type_to_path.get(nt)
-            for nt in used_node_types
-            if nt in node_type_to_path
-        )
-
-        unused_models = set(all_models.keys()) - used_model_files
-
-        # 🔥 削除可能ディレクトリ判定
         removable_dirs = self.detect_removable_directories(
             top_level_dirs,
             node_type_to_path,
             used_node_types
         )
 
-        # ===== レポート =====
+        # =============================
+        # 全モデル取得
+        # =============================
+        all_models = self.scan_all_model_files()
+        unused_models = set(all_models.keys()) - used_model_files
+
+        if DEBUG:
+            print(f"[DEBUG] Scanned workflows: {workflow_count}")
+            print(f"[DEBUG] Used nodes: {len(used_node_types)}")
+            print(f"[DEBUG] Used models: {len(used_model_files)}")
+
+        # =============================
+        # レポート生成
+        # =============================
         report = []
         report.append("===== USAGE REPORT =====\n")
 
@@ -94,13 +104,11 @@ class UsageCheckerNode:
             report.append(f"{m} ({all_models.get(m, '')})")
 
         report.append("\n---- Dependency Summary ----")
+        report.append(f"Scanned Workflows: {workflow_count}")
         report.append(f"Used Nodes: {len(used_node_types)}")
         report.append(f"Used Models: {len(used_model_files)}")
         report.append(f"Removable Directories: {len(removable_dirs)}")
 
-        print(f"[DEBUG] used_model_files = {used_model_files}")
-        print(f"[DEBUG] all_models = {list(all_models.keys())[:20]}")
-        
         return ("\n".join(report),)
 
     # =====================================================
@@ -109,16 +117,10 @@ class UsageCheckerNode:
 
     def scan_workflow(self, path, used_node_types, used_model_files, dependency_graph):
 
-        
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            print(f"[DEBUG] Scanning workflow: {path}")
-            print(f"[DEBUG] Root JSON type: {type(data)}")
-
-        except Exception as e:
-            print(f"[DEBUG] Failed to load JSON: {path}")
-            print(f"[DEBUG] Reason: {e}")
+        except Exception:
             return
 
         nodes = []
@@ -131,134 +133,138 @@ class UsageCheckerNode:
         elif isinstance(data, list):
             nodes = data
 
-        print(f"[DEBUG] Nodes container type: {type(nodes)}")
-        
         for node in nodes:
-            print(f"[DEBUG] Node keys: {list(node.keys())}")
-            print(f"[DEBUG] Node type: {node.get('type')}")
-            print(f"[DEBUG] Raw inputs type: {type(node.get('inputs'))}")
-            
 
             node_type = node.get("type")
             if node_type:
                 used_node_types.add(node_type)
 
             raw_inputs = node.get("inputs", {})
-            
-            # =============================
-            # ① inputs 正規化
-            # =============================
+
+            # inputs正規化
             if isinstance(raw_inputs, dict):
                 inputs = raw_inputs
-            
             elif isinstance(raw_inputs, list):
                 inputs = {
                     item.get("name"): item.get("value")
                     for item in raw_inputs
                     if isinstance(item, dict) and item.get("name")
                 }
-            
             else:
                 inputs = {}
 
-            # =============================
-            # ②  v3 widgets_values 対応（順序依存しない安全版）
-            # =============================
-            
+            # widgets_values対応
             widgets = node.get("widgets_values")
-            
+
             if isinstance(widgets, list):
-            
                 input_defs = node.get("inputs", [])
-            
-                # widget を持つ input 定義だけ抽出
+
                 widget_inputs = [
                     inp for inp in input_defs
                     if isinstance(inp, dict) and inp.get("widget") is not None
                 ]
-            
-                # workflow 上の順番に基づいてマッピング
+
                 for inp_def, widget_value in zip(widget_inputs, widgets):
-            
                     input_name = inp_def.get("name")
-            
                     if isinstance(widget_value, str):
                         inputs[input_name] = widget_value
-            
-            
-            print(f"[DEBUG] Normalized inputs: {inputs}")
 
             if node_type not in dependency_graph:
                 dependency_graph[node_type] = []
 
-            for value in inputs.values():
+            folder_map = self.get_input_folder_map(node_type)
+
+            for key, value in inputs.items():
 
                 if not isinstance(value, str):
                     continue
 
-                # ① まず拡張子で拾う（Resolver非依存）
+                filename = os.path.basename(value)
+
+                # folder指定優先
+                if key in folder_map:
+                    resolved = self.resolve_with_folder(folder_map[key], value)
+                    if resolved:
+                        fn = os.path.basename(resolved)
+                        used_model_files.add(fn)
+                        dependency_graph[node_type].append(fn)
+                        continue
+
+                # 拡張子検出
                 if self.is_model_filename(value):
-                    print(f"[DEBUG] Detected model by extension: {value}")
-                    filename = os.path.basename(value)
                     used_model_files.add(filename)
                     dependency_graph[node_type].append(filename)
 
-                print(f"[DEBUG] Checking value: {value}")
-                # ② Resolverで追加確認
+                # 汎用resolve
                 resolved = self.resolve_model(value)
                 if resolved:
-                    print(f"[DEBUG] Resolver matched: {resolved}")    
-                    filename = os.path.basename(resolved)
-                    used_model_files.add(filename)
-                    dependency_graph[node_type].append(filename)
+                    fn = os.path.basename(resolved)
+                    used_model_files.add(fn)
+                    dependency_graph[node_type].append(fn)
 
-                
+                # embedding検出
                 for emb in self.extract_embeddings(value):
                     resolved = self.resolve_model(emb)
                     if resolved:
-                        filename = os.path.basename(resolved)
-                        used_model_files.add(filename)
-                        dependency_graph[node_type].append(filename)
+                        fn = os.path.basename(resolved)
+                        used_model_files.add(fn)
+                        dependency_graph[node_type].append(fn)
 
     # =====================================================
-    # Resolver
+    # 以下は変更なし（ロジック維持）
     # =====================================================
+
+    def get_input_folder_map(self, node_type):
+
+        folder_map = {}
+        node_cls = NODE_CLASS_MAPPINGS.get(node_type)
+        if not node_cls:
+            return folder_map
+
+        try:
+            input_def = node_cls.INPUT_TYPES()
+        except Exception:
+            return folder_map
+
+        for section in ["required", "optional"]:
+            section_data = input_def.get(section, {})
+            for key, config in section_data.items():
+                if isinstance(config, tuple) and len(config) > 1:
+                    meta = config[1]
+                    if isinstance(meta, dict) and "folder" in meta:
+                        folder_map[key] = meta["folder"]
+
+        return folder_map
+
+    def resolve_with_folder(self, folder_type, value):
+        try:
+            full_path = folder_paths.get_full_path(folder_type, value)
+            if full_path and os.path.exists(full_path):
+                return full_path
+        except Exception:
+            pass
+        return None
 
     def resolve_model(self, value):
-
         value = value.strip().replace("\\", "/")
-
         for category in folder_paths.folder_names_and_paths.keys():
             try:
                 full_path = folder_paths.get_full_path(category, value)
                 if full_path and os.path.exists(full_path):
                     return full_path
-            except:
+            except Exception:
                 continue
-
         return None
 
-    # =====================================================
-    # Embedding抽出
-    # =====================================================
-
     def extract_embeddings(self, text):
-
         results = set()
-
         matches = re.findall(r"embedding:([\w\-\_\.]+)", text)
         matches += re.findall(r"<embedding:([\w\-\_\.]+)>", text)
-
         for m in matches:
             if not m.endswith(".pt"):
                 m += ".pt"
             results.add(m)
-
         return results
-
-    # =====================================================
-    # モデル全取得
-    # =====================================================
 
     def scan_all_model_files(self):
 
@@ -284,10 +290,6 @@ class UsageCheckerNode:
 
         return all_models
 
-    # =====================================================
-    # custom_nodes解析
-    # =====================================================
-
     def get_top_level_custom_nodes(self, custom_nodes_dir):
         return {
             os.path.join(custom_nodes_dir, d)
@@ -303,7 +305,7 @@ class UsageCheckerNode:
             try:
                 module = __import__(cls.__module__, fromlist=[""])
                 file_path = module.__file__
-            except:
+            except Exception:
                 continue
 
             if file_path and custom_nodes_dir in file_path:
@@ -315,7 +317,6 @@ class UsageCheckerNode:
 
     def detect_removable_directories(self, top_level_dirs, node_type_to_path, used_node_types):
 
-        # ディレクトリごとに属するnode_typeを集約
         dir_to_node_types = {}
 
         for node_type, path in node_type_to_path.items():
@@ -324,31 +325,22 @@ class UsageCheckerNode:
         removable = set()
 
         for d in top_level_dirs:
-
             node_types = dir_to_node_types.get(d, set())
-
-            # node_typeを一つも持たないディレクトリも削除候補
             if not node_types:
                 removable.add(d)
                 continue
-
-            # すべて未使用なら削除候補
             if all(nt not in used_node_types for nt in node_types):
                 removable.add(d)
 
         return removable
 
-    # =====================================================
-    # モデル拡張子判定
-    # =====================================================
-
     def is_model_filename(self, name):
-
         return isinstance(name, str) and name.lower().endswith((
             ".safetensors",
             ".ckpt",
             ".pt",
             ".pth",
             ".bin",
-            ".onnx"
+            ".onnx",
+            ".gguf"
         ))
