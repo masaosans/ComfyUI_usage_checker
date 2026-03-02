@@ -144,17 +144,49 @@ class UsageCheckerNode:
                 used_node_types.add(node_type)
 
             raw_inputs = node.get("inputs", {})
-
+            
+            # =============================
+            # ① inputs 正規化
+            # =============================
             if isinstance(raw_inputs, dict):
                 inputs = raw_inputs
+            
             elif isinstance(raw_inputs, list):
                 inputs = {
                     item.get("name"): item.get("value")
                     for item in raw_inputs
                     if isinstance(item, dict) and item.get("name")
                 }
+            
             else:
                 inputs = {}
+            
+            # =============================
+            # ② 🔥 v3 widgets_values 対応をここに追加
+            # =============================
+            widgets = node.get("widgets_values")
+            
+            if isinstance(widgets, list):
+            
+                node_cls = NODE_CLASS_MAPPINGS.get(node_type)
+            
+                if node_cls:
+                    try:
+                        input_def = node_cls.INPUT_TYPES()
+            
+                        ordered_keys = []
+            
+                        for section in ["required", "optional"]:
+                            section_data = input_def.get(section, {})
+                            ordered_keys.extend(section_data.keys())
+            
+                        for key, value in zip(ordered_keys, widgets):
+                            if isinstance(value, str):
+                                inputs[key] = value
+            
+                    except Exception as e:
+                        print(f"[DEBUG] INPUT_TYPES read failed: {node_type} : {e}")
+            
 
             print(f"[DEBUG] Normalized inputs: {inputs}")
 
